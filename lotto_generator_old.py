@@ -1,3 +1,4 @@
+import random
 import sqlite3
 from collections import Counter
 from config import LottoConfig
@@ -8,35 +9,50 @@ class LottoGenerator:
     def __init__(self, db_path):
         self.config = LottoConfig()
         self.analyzer = LottoAnalyzer(db_path)
-        self.input_numbers = []
-        self.input_numbers_count = 0
+        self.frequent_numbers = []
+        self.frequent_numbers_count = 0
 
-    def set_input_numbers(self, numbers_str):
-        """사용자가 입력한 번호를 설정하는 함수"""
-        # 입력 문자열을 ','로 분리하고 공백 제거 후 정수로 변환
-        try:
-            numbers = [int(num.strip()) for num in numbers_str.split(',')]
-        except ValueError:
-            raise ValueError("입력된 번호는 쉼표로 구분된 숫자여야 합니다.")
+    def set_frequent_numbers(self, count):
+        """DB에서 가장 많이 나온 번호들을 가져와서 설정하는 함수"""
+        if not 6 <= count <= 45:
+            raise ValueError("자주 나온 번호의 개수는 6개 이상 45개 이하여야 합니다.")
 
-        # 번호 개수 및 범위 검증
-        if not 6 <= len(numbers) <= 45:
-            raise ValueError("번호는 최소 6개, 최대 45개여야 합니다.")
-        if any(num < 1 or num > 45 for num in numbers):
-            raise ValueError("번호는 1부터 45까지의 숫자여야 합니다.")
-        if len(numbers) != len(set(numbers)):
-            raise ValueError("중복된 번호는 허용되지 않습니다.")
+        # LottoAnalyzer의 get_frequent_numbers 메서드 호출
+        conn = sqlite3.connect(self.analyzer.db_path)
+        query = """
+            SELECT number, COUNT(*) as frequency
+            FROM (
+                SELECT num1 as number FROM lotto_results
+                UNION ALL
+                SELECT num2 FROM lotto_results
+                UNION ALL
+                SELECT num3 FROM lotto_results
+                UNION ALL
+                SELECT num4 FROM lotto_results
+                UNION ALL
+                SELECT num5 FROM lotto_results
+                UNION ALL
+                SELECT num6 FROM lotto_results
+            )
+            GROUP BY number
+            ORDER BY frequency DESC, number ASC
+            LIMIT ?
+        """
 
-        self.input_numbers = sorted(numbers)
-        self.input_numbers_count = len(numbers)
+        cursor = conn.cursor()
+        cursor.execute(query, (count,))
+        results = cursor.fetchall()
+        conn.close()
+
+        self.frequent_numbers = [row[0] for row in results]
+        self.frequent_numbers_count = count
 
     def generate_single_combination(self):
-        """입력된 번호들 중에서 번호 조합 하나를 생성하는 함수"""
-        if not self.input_numbers:
-            raise ValueError("먼저 번호를 입력해주세요.")
+        """자주 나온 번호들 중에서 번호 조합 하나를 생성하는 함수"""
+        if not self.frequent_numbers:
+            raise ValueError("먼저 자주 나온 번호를 설정해주세요.")
 
-        import random
-        return sorted(random.sample(self.input_numbers, 6))
+        return sorted(random.sample(self.frequent_numbers, 6))
 
     def validate_combination(self, numbers):
         """번호 조합이 설정된 기준에 맞는지 검증하는 함수"""
@@ -140,15 +156,15 @@ class LottoGenerator:
         # 10. 구간별 번호 개수 검증
         sections = [0] * 5  # 1-10, 11-20, 21-30, 31-40, 41-45
         for num in numbers:
-            if 1 <= num <= 10:
+            if 1 <= num <= 10:  # 1-10 구간
                 sections[0] += 1
-            elif 11 <= num <= 20:
+            elif 11 <= num <= 20:  # 11-20 구간
                 sections[1] += 1
-            elif 21 <= num <= 30:
+            elif 21 <= num <= 30:  # 21-30 구간
                 sections[2] += 1
-            elif 31 <= num <= 40:
+            elif 31 <= num <= 40:  # 31-40 구간
                 sections[3] += 1
-            elif 41 <= num <= 45:
+            elif 41 <= num <= 45:  # 41-45 구간
                 sections[4] += 1
 
         for count in sections:
@@ -165,15 +181,15 @@ class LottoGenerator:
 
     def generate_numbers(self, num_games=1):
         """설정된 기준에 맞는 로또 번호 조합을 생성하는 함수"""
-        if not self.input_numbers:
-            raise ValueError("먼저 번호를 입력해주세요.")
+        if not self.frequent_numbers:
+            raise ValueError("먼저 자주 나온 번호를 설정해주세요.")
 
         valid_combinations = []
         total_attempts = 0
-        max_attempts = num_games * 10000  # 최대 시도 횟수 설정
+        max_attempts = num_games * 1000  # 최대 시도 횟수 설정
 
         while len(valid_combinations) < num_games and total_attempts < max_attempts:
-            # 입력된 번호들 중에서 6개 선택
+            # 자주 나온 번호들 중에서 6개 선택
             numbers = self.generate_single_combination()
 
             # 생성된 번호가 기준에 맞는지 검증
@@ -190,12 +206,14 @@ def main():
     db_path = "../lotto.db"  # SQLite DB 파일 경로
     generator = LottoGenerator(db_path)
 
-    # 번호 입력 받기
+    # 자주 나온 번호 개수 입력 받기
     while True:
         try:
-            numbers_str = input("사용할 번호를 쉼표로 구분하여 입력하세요 (최소 6개, 최대 45개): ")
-            generator.set_input_numbers(numbers_str)
-            break
+            frequent_count = int(input("사용할 자주 나온 번호의 개수를 입력하세요 (6-45): "))
+            if 6 <= frequent_count <= 45:
+                generator.set_frequent_numbers(frequent_count)
+                break
+            print("6에서 45 사이의 숫자를 입력해주세요.")
         except ValueError as e:
             print(f"오류: {e}")
 
@@ -214,7 +232,7 @@ def main():
 
     # 결과 출력
     if combinations:
-        print(f"\n입력된 번호들: {generator.input_numbers}")
+        print(f"\n선택된 자주 나온 번호들: {sorted(generator.frequent_numbers)}")
         print(f"\n{num_games}개의 로또 번호 조합이 생성되었습니다:")
         for i, numbers in enumerate(combinations, 1):
             print(f"[{i}번] {numbers}")
